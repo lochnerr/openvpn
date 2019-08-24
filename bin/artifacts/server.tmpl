@@ -1,0 +1,36 @@
+port $PORT
+proto udp
+dev tun
+ca ca.crt
+cert server.crt
+key server.key
+dh dh3072.pem
+topology subnet
+server $NETWORK $NETMASK
+#push "route $ROUTE_NET $ROUTE_MASK"
+client-config-dir /ccd
+keepalive 10 60
+tls-auth ta.key 0
+cipher AES-256-CBC
+compress lz4-v2
+push "compress lz4-v2"
+max-clients 20
+user nobody
+group nobody
+persist-key
+persist-tun
+status openvpn-status.log
+verb 4
+mute 20
+explicit-exit-notify 1
+chroot /etc/openvpn/jail
+crl-verify crl.pem
+remote-cert-eku "TLS Web Client Authentication"
+tls-version-min 1.2
+tls-cipher TLS-ECDHE-RSA-WITH-AES-128-GCM-SHA256:TLS-ECDHE-ECDSA-WITH-AES-128-GCM-SHA256:TLS-ECDHE-RSA-WITH-AES-256-GCM-SHA384:TLS-DHE-RSA-WITH-AES-256-CBC-SHA256
+auth $DIGEST
+##gw client-to-client
+# After ccd
+## gw route 192.168.33.0 255.255.255.0
+# Then create a file ccd/vpnclone-gw with this line:
+#   iroute 192.168.33.0 255.255.255.0

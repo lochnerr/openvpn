@@ -1,0 +1,82 @@
+#!/bin/sh
+
+# Sign a csr (certificate signing request) for an OpenVPN server or client.
+
+# This generates a client or server certificate and creates a tar file that contains the certificate, 
+# the ca certificate and the TLS auth key. Additionally, for servers, a jail sub-directory and
+# a certificate revocation list are created and included in the tar file.  These are all of the
+# files necessary for a client or server to operate (in addition to their respective private keys).
+
+PROGRAM="${0##*/}"
+
+usage() {
+  echo "Usage: $PROGRAM <SERVER ABBR> <CLIENT ABBR>"
+  echo "       $PROGRAM <SERVER ABBR>"
+  if [ ! -z "$1" ]; then
+    echo
+    echo "$1"
+  fi
+  exit 1
+}
+
+[ $# -lt 1 ] && usage
+
+SERVER="$1"
+CLIENT="$2"
+ABBR="${1}-$2"
+[ -z "$2" ] && ABBR="$1"
+
+if [ ! -e ${ABBR}.req ]; then
+  echo "No signing request file found '${ABBR}.req'."
+  exit 1
+fi
+
+# Import the signing request to easy rsa.
+easyrsa import-req ${ABBR}.req ${ABBR}
+
+# Delete the no longer needed request.
+rm ${ABBR}.req
+
+# Sign the request with easyrsa.
+mode="client"
+[ -z "$CLIENT" ] && mode="server"
+if [ "$SIGNMODE"  = "test" ]; then
+  echo yes | easyrsa sign-req $mode ${ABBR}
+else
+  easyrsa sign-req $mode ${ABBR}
+fi
+
+# Create the results directory, if necessary.
+mkdir -p $ABBR
+
+# Create the tls authentication param, if necessary.
+if [ ! -e ${SERVER}/ta.key ]; then
+  mkdir -p ${SERVER}
+  # Generate the tls handshake shared secret.
+  openvpn --genkey --secret $SERVER/ta.key
+  chmod 600 $SERVER/ta.key
+fi
+
+# Generate an empty certificate revocation list, if necessary.
+[ ! -e ./pki/crl.pem ] && easyrsa gen-crl
+
+if [ "$mode" = "client" ]; then
+  cp -p ./pki/ca.crt             ${ABBR}/${SERVER}-ca.crt
+  cp -p ./pki/issued/${ABBR}.crt ${ABBR}/
+  cp -p $SERVER/ta.key           ${ABBR}/${SERVER}-ta.key
+else
+  mkdir -p $ABBR/jail/tmp
+  mkdir    $ABBR/jail/ccd
+  cp -p ./pki/ca.crt             ${ABBR}/
+  cp -p ./pki/issued/${ABBR}.crt ${ABBR}/server.crt
+  cp -p ./pki/crl.pem            ${ABBR}/jail/
+  # Setup link for crl.pem.
+  ln -sf jail/crl.pem ${ABBR}/crl.pem
+  # Set jail directories ownership.
+  chown -R nobody:nobody         ${ABBR}/jail
+fi
+
+# Tar the package.
+echo "Tar the results."
+tar -czf ${ABBR}.tgz -C $ABBR .
+

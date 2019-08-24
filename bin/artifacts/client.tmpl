@@ -1,0 +1,29 @@
+client
+dev tun
+proto udp
+remote ${SERVER_ADDR} $PORT
+resolv-retry infinite
+nobind
+# Downgrade privileges after initialization (non-Windows only)
+user nobody
+group nobody
+persist-key
+persist-tun
+mute-replay-warnings
+ca ${SERVER}-ca.crt
+cert ${SERVER}-${CLIENT}.crt
+key ${SERVER}-${CLIENT}.key
+remote-cert-tls server
+tls-auth ${SERVER}-ta.key 1
+verify-x509-name 'CN=${SERVER}'
+remote-cert-eku 'TLS Web Server Authentication'
+cipher AES-256-CBC
+keepalive 10 60
+verb 4
+mute 10
+auth-retry none
+tls-client
+tls-version-min 1.2
+tls-cipher TLS-ECDHE-RSA-WITH-AES-128-GCM-SHA256:TLS-ECDHE-ECDSA-WITH-AES-128-GCM-SHA256:TLS-ECDHE-RSA-WITH-AES-256-GCM-SHA384:TLS-DHE-RSA-WITH-AES-256-CBC-SHA256
+auth $DIGEST
+

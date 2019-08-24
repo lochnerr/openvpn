@@ -1,0 +1,37 @@
+version: "3.2"
+
+# OpenVPN container automated test compose file.
+
+services:
+  vpn:
+    image: lochnerr/openvpn:latest
+    privileged: true
+    command: /usr/local/bin/openvpn-test server
+    #command: sleep 600
+    restart: "no"
+    hostname: vpn.example.com
+    volumes:
+      - test:/etc/openvpn
+    networks:
+      - openvpn
+
+  sut:
+    image: lochnerr/openvpn:latest
+    privileged: true
+    command: /usr/local/bin/openvpn-test sut
+    #command: sleep 600
+    restart: "no"
+    hostname: sut.example.com
+    volumes:
+      - test:/etc/openvpn
+    networks:
+      - openvpn
+    depends_on:
+      - vpn
+
+volumes:
+  test:
+
+networks:
+  openvpn:
+

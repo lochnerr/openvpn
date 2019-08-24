@@ -1,0 +1,188 @@
+#!/bin/sh
+
+# Script to test the openvpn container.
+
+# This is run as part of the automated system unit tests by
+# docker-compose.test.yml.  
+
+# The test process is:
+# 1) Create and start a server container.
+# 2) Create and start a client container.
+# 3) Verify that the client can ping the server.
+
+# Wait for a file to appear on shared volume.
+wait_file() {
+  echo "Waiting for file: '$1'."
+  # Wait up to 3 minutes for file to appear.
+  for try in $(seq -s ' ' 1 36) ; do
+    if [ -e "$1" ]; then
+      echo "File $1 is available!"
+      sleep 2
+      return 0
+    fi
+    sleep 5;
+    echo "waiting...."
+  done
+  echo "Error: file $1 is not available!"
+  exit 1
+}
+
+server_test() {
+
+  echo "Running Server Tests"
+
+  BASENAME="$(hostname -f)"
+
+  # Get into the openvpn directory.
+  cd /etc/openvpn
+
+  # Use pre-built diffee-hellman parameters.
+  cp /usr/local/bin/artifacts/test-dh3072.pem dh3072.pem
+
+  # Create server key and certificate signing request.
+  openvpn-init --port 7111 --net 10.77.123.0 --keysize 4096 --digest sha256 $BASENAME
+
+  # Simulate receiving the "package" file from the CA.
+  wait_file $BASENAME.tgz
+
+  # Extract the results.
+  tar -xzf $BASENAME.tgz
+
+  # Remove the unneeded tar file.
+  rm $BASENAME.tgz
+
+  # List the directory contents.
+  echo "Directory listing for server:"
+  ls -lR
+  echo "====="
+
+  echo "Starting OpenVPN server."
+
+  openvpn --config openvpn.conf &
+
+  # Wait up to 5 minutes to client to connect and issue stop signal.
+  for try in $(seq 0 150); do
+    sleep 2s
+    echo "Waiting for stop signal."
+    if [ -e /etc/openvpn/stop ]; then
+      echo "Shutdown!"
+      break
+    fi
+  done
+}
+
+sut_test() {
+
+  echo "Running sut (client) Tests"
+
+  if [ ! -d /root/CA ]; then
+    # Create a dummy CA.
+    mkdir -p /root/CA
+    cd /root/CA
+
+    easyrsa init-pki
+    easyrsa build-ca <<-__EOD__
+	Passw0rd
+	Passw0rd
+	Example CA
+	
+	__EOD__
+
+    # Remove the password from this test CA.
+    mv ./pki/private/ca.key ./pki/private/ca-save.key
+    openssl rsa -in ./pki/private/ca-save.key -out ./pki/private/ca.key -passin pass:Passw0rd
+  else
+    # Dummy CA already built.
+    cd /root/CA
+  fi
+
+  BASENAME="${SERVER}-$CLIENT"
+  export SIGNMODE="test"
+
+  # Create the client directory.
+  mkdir -p /home/$CLIENT/.cert
+
+  # Create client key and certificate signing request.
+  openvpn-init --port 7111 --net 10.77.123.0 --keysize 4096 --digest sha256 --nopass --address vpn --target /home/$CLIENT/.cert $SERVER $CLIENT
+
+  # Simulate sending the client signing request to the CA.
+  cd /root/CA
+  mv /home/$CLIENT/.cert/$BASENAME.req .
+
+  # Sign the client request.
+  openvpn-sign $SERVER $CLIENT
+
+  # Simulate sending the client "package" to the client.
+  mv $BASENAME.tgz /home/$CLIENT/.cert/
+
+  # Untar the package.
+  cd /home/$CLIENT/.cert
+  tar -xzf $BASENAME.tgz
+
+  # Remove the unneeded tar file.
+  rm $BASENAME.tgz
+
+  # List the directory contents.
+  echo "Directory listing for client:"
+  ls -lR
+  echo "====="
+
+  # Simulate receiving the signing request from the server.
+  wait_file /etc/openvpn/${SERVER}.req
+
+  # Sign the server request.
+  cd /root/CA
+  mv /etc/openvpn/${SERVER}.req .
+  openvpn-sign $SERVER
+
+  # Simulate sending the server "package" to the server.
+  mv /root/CA/$SERVER.tgz /etc/openvpn/
+
+  # Get back to the client directory.
+  cd /home/$CLIENT/.cert
+
+  # Wait for the server to come up.
+  sleep 10
+
+  # Start OpenVPN the client.
+  openvpn --config $BASENAME.ovpn &
+
+  # Wait up to 5 minutes to connect to the vpn server.
+  for try in  $(seq 0 150) ; do
+    sleep 2s
+    echo "Checking for vpn connectivity."
+    if ping -c 5 -W 1 10.77.123.1; then
+      echo "VPN is up!"
+      break
+    else
+      echo "VPN is not up yet!"
+    fi
+  done
+
+  # Tell the vpn server to stop.
+  touch /etc/openvpn/stop
+
+  # Wait a little for the server to stop.
+  sleep 5s
+}
+
+# Start
+
+SERVER="vpn.$(hostname -d)"
+CLIENT="testuser"
+
+hns="$(hostname -s)"
+if [ "$hns" = "vpn" ]; then
+  server_test
+elif [ "$hns" = "sut" ]; then
+  sut_test
+else
+  exit 1
+fi
+
+echo "Processes: "
+ps aux
+echo "====="
+
+echo "Done!"
+
