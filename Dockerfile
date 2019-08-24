@@ -38,7 +38,7 @@ COPY bin/. /usr/local/bin/
 VOLUME  /etc/openvpn
 WORKDIR /etc/openvpn
 
-EXPOSE 1194
+EXPOSE 1194/udp
 
 ENTRYPOINT ["/sbin/tini", "-v", "--"]
 CMD ["/usr/sbin/openvpn","--config","/etc/openvpn/openvpn.conf"]
