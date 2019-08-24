@@ -1,0 +1,16 @@
+#!/bin/sh
+
+# Initialize EasyRSA (build a certificate authority) for use with OpenVPN container.
+
+if [ -e pki/vars ]; then
+  echo "EasyRSA already initialized!"
+else
+  easyrsa init-pki
+  # Copy the default easyrsa vars to the pki (persistent) directory.
+  cp -p /usr/local/bin/vars pki/
+  easyrsa build-ca
+fi
+
+echo "Done!"
+
+exit 0
