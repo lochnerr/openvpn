@@ -103,7 +103,7 @@ sut_test() {
   mkdir -p /home/$CLIENT/.cert
 
   # Create client key and certificate signing request.
-  openvpn-init --port 7111 --net 10.77.123.0 --keysize 4096 --digest sha256 --nopass --address vpn --target /home/$CLIENT/.cert $SERVER $CLIENT
+  openvpn-init --port 7111 --keysize 4096 --digest sha256 --nopass --address vpn --target /home/$CLIENT/.cert $SERVER $CLIENT
 
   # Simulate sending the client signing request to the CA.
   cd /root/CA

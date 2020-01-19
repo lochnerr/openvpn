@@ -80,3 +80,6 @@ fi
 echo "Tar the results."
 tar -czf ${ABBR}.tgz -C $ABBR .
 
+# If client, delete the working directory.
+[ "$mode" = "client" ] && rm -rf $ABBR
+

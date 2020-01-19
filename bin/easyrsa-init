@@ -5,10 +5,26 @@
 if [ -e pki/vars ]; then
   echo "EasyRSA already initialized!"
 else
+  # Initialize EasyRSA.
   easyrsa init-pki
   # Copy the default easyrsa vars to the pki (persistent) directory.
   cp -p /usr/local/bin/vars pki/
-  easyrsa build-ca
+  # Build the CA.
+  if [ "$1" = "test" ]; then
+    # Build a dummy CA for testing.
+    easyrsa build-ca <<-__EOD__
+	Passw0rd
+	Passw0rd
+	Example CA
+
+	__EOD__
+    # Remove the password from the test CA.
+    mv ./pki/private/ca.key ./pki/private/ca-save.key
+    openssl rsa -in ./pki/private/ca-save.key -out ./pki/private/ca.key -passin pass:Passw0rd
+  else
+    # Let the user set the CA info.
+    easyrsa build-ca
+  fi
 fi
 
 echo "Done!"
