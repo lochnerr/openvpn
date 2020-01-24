@@ -29,6 +29,10 @@ RUN mv /usr/share/easy-rsa/* /usr/local/bin/ \
       -e "s:#set_var EASYRSA_CERT_RENEW.*:set_var EASYRSA_CERT_RENEW	180:" \
       # Don't want to be forced to renew CRL often.
       -e "s:#set_var EASYRSA_CRL_DAYS.*:set_var EASYRSA_CRL_DAYS	3650:" \
+      # Enable elliptic curve support.
+      -e "s:#set_var EASYRSA_ALGO.*:set_var EASYRSA_ALGO		ec:" \
+      # Set elliptic curve.
+      -e "s:#set_var EASYRSA_CURVE.*:set_var EASYRSA_CURVE		secp521r1:" \
       /usr/local/bin/vars.example > /usr/local/bin/vars \
  && mv /etc/openvpn /etc/openvpn-bak \
  && mkdir /etc/openvpn
