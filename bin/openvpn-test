@@ -29,6 +29,9 @@ wait_file() {
 
 server_test() {
 
+  wait_file /etc/openvpn/ca-is-ready
+  rm /etc/openvpn/ca-is-ready
+
   echo "Running Server Tests"
 
   BASENAME="$(hostname -f)"
@@ -36,11 +39,8 @@ server_test() {
   # Get into the openvpn directory.
   cd /etc/openvpn
 
-  # Use pre-built diffee-hellman parameters.
-  cp /usr/local/bin/artifacts/test-dh3072.pem dh3072.pem
-
   # Create server key and certificate signing request.
-  openvpn-init --port 7111 --net 10.77.123.0 --keysize 4096 --digest sha256 $BASENAME
+  openvpn-init --port 7111 --net 10.77.123.0 --keysize 4096 --digest sha512 $BASENAME
 
   # Simulate receiving the "package" file from the CA.
   wait_file $BASENAME.tgz
@@ -71,42 +71,76 @@ server_test() {
   done
 }
 
+create_ca() {
+
+  echo "Creating CA: $1"
+
+  TARGET="$1"
+  NAME="${2:-Test CA}"
+  OPTS="$3"
+
+  # Create the CA.
+  mkdir -p $TARGET
+  cd $TARGET
+
+  easyrsa --batch init-pki
+  easyrsa --batch --dn-mode=cn_only --req-cn="'$NAME'" build-ca $OPTS
+}
+
 sut_test() {
 
   echo "Running sut (client) Tests"
 
-  if [ ! -d /root/CA ]; then
-    # Create a dummy CA.
-    mkdir -p /root/CA
-    cd /root/CA
-
-    easyrsa init-pki
-    easyrsa build-ca <<-__EOD__
-	Passw0rd
-	Passw0rd
-	Example CA
-	
-	__EOD__
-
-    # Remove the password from this test CA.
-    mv ./pki/private/ca.key ./pki/private/ca-save.key
-    openssl rsa -in ./pki/private/ca-save.key -out ./pki/private/ca.key -passin pass:Passw0rd
-  else
-    # Dummy CA already built.
-    cd /root/CA
-  fi
-
   BASENAME="${SERVER}-$CLIENT"
   export SIGNMODE="test"
+
+  REVOKE="Xtrue"
+  SUBCA="true"
+  if [ "$SUBCA" = "true" ]; then
+
+    create_ca /root/root-ca  "Root CA"       "nopass"
+    easyrsa gen-crl
+    create_ca /root/ca       "Signer #1 CA"  "subca nopass"
+
+    # Simulate sending the subca signing request to the root ca.
+    cp -p /root/ca/pki/reqs/ca.req  /root/root-ca/subca1.req
+
+    # Simulate logging in to the root ca.
+    cd /root/root-ca
+
+    # Import signing request.
+    easyrsa --batch import-req ./subca1.req subca1
+
+    # Sign it.
+    easyrsa --batch sign-req ca subca1
+
+    # Simulate logging back into signer ca.
+    cd /root/ca
+
+    # Simulate copying the signed ca certificate.
+    cp -p /root/root-ca/pki/issued/subca1.crt pki/ca.crt
+
+    # Simulate copying the signed root ca certificate.
+    cp -p /root/root-ca/pki/ca.crt  pki/root-ca.crt
+    cp -p /root/root-ca/pki/crl.pem pki/root-crl.pem
+
+    easyrsa gen-crl
+
+  else
+    create_ca /root/ca       "Test CA"       "nopass"
+  fi
+
+  # Inform the server container that the certificate authority is ready.
+  touch /etc/openvpn/ca-is-ready
 
   # Create the client directory.
   mkdir -p /home/$CLIENT/.cert
 
   # Create client key and certificate signing request.
-  openvpn-init --port 7111 --keysize 4096 --digest sha256 --nopass --address vpn --target /home/$CLIENT/.cert $SERVER $CLIENT
+  openvpn-init --port 7111 --keysize 4096 --digest sha512 --nopass --address vpn --target /home/$CLIENT/.cert $SERVER $CLIENT
 
   # Simulate sending the client signing request to the CA.
-  cd /root/CA
+  cd /root/ca
   mv /home/$CLIENT/.cert/$BASENAME.req .
 
   # Sign the client request.
@@ -130,13 +164,26 @@ sut_test() {
   # Simulate receiving the signing request from the server.
   wait_file /etc/openvpn/${SERVER}.req
 
+  if [ "$REVOKE" = "true" ]; then
+    cd /root/ca
+    echo "Testing revoked certificate: ${BASENAME}."
+    easyrsa --batch revoke ${BASENAME}
+    easyrsa gen-crl
+    hashca="$(openssl x509 -hash -noout -in pki/ca.crt)"
+    echo "Copying crl.pem to /etc/openvpn/jail/ca/${hashca}.r0."
+    cp -p pki/crl.pem        /etc/openvpn/jail/ca/${hashca}.r0
+    chown nobody:nobody      /etc/openvpn/jail/ca/*
+    cat pki/root-crl.pem pki/crl.pem >/etc/openvpn/jail/crl.pem
+    chown nobody:nobody               /etc/openvpn/jail/crl.pem
+  fi
+
   # Sign the server request.
-  cd /root/CA
+  cd /root/ca
   mv /etc/openvpn/${SERVER}.req .
   openvpn-sign $SERVER
 
   # Simulate sending the server "package" to the server.
-  mv /root/CA/$SERVER.tgz /etc/openvpn/
+  mv /root/ca/$SERVER.tgz /etc/openvpn/
 
   # Get back to the client directory.
   cd /home/$CLIENT/.cert
@@ -151,7 +198,7 @@ sut_test() {
   for try in  $(seq 0 150) ; do
     sleep 2s
     echo "Checking for vpn connectivity."
-    if ping -c 5 -W 1 10.77.123.1; then
+    if ping -c 5 -W 1 10.77.123.1 >/dev/null 2>&1 ; then
       echo "VPN is up!"
       break
     else
