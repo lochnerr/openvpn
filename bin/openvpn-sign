@@ -50,28 +50,60 @@ fi
 mkdir -p $ABBR
 
 # Create the tls authentication param, if necessary.
-if [ ! -e ${SERVER}/ta.key ]; then
+if [ ! -e ${SERVER}/tls.key ]; then
   mkdir -p ${SERVER}
   # Generate the tls handshake shared secret.
-  openvpn --genkey --secret $SERVER/ta.key
-  chmod 600 $SERVER/ta.key
+  openvpn --genkey --secret $SERVER/tls.key
+  chmod 600 $SERVER/tls.key
 fi
 
 # Generate an empty certificate revocation list, if necessary.
 [ ! -e ./pki/crl.pem ] && easyrsa gen-crl
 
+copy_ca() {
+
+  # Copy certificate and certificate revocation list into ca directory
+  # as required by the OpenVPN "capath" directive.
+
+  dest="$1"
+  pfx="$2"
+  hash="$(openssl x509 -hash -noout -in pki/${pfx}ca.crt)"
+  mkdir -p $dest/jail/ca
+  cp -p pki/${pfx}ca.crt   $dest/jail/ca/${hash}.0
+  cp -p pki/${pfx}crl.pem  $dest/jail/ca/${hash}.r0
+  echo "\npki/${pfx}crl.pem:"
+  openssl crl -noout -text -in pki/${pfx}crl.pem
+}
+
 if [ "$mode" = "client" ]; then
-  cp -p ./pki/ca.crt             ${ABBR}/${SERVER}-ca.crt
-  cp -p ./pki/issued/${ABBR}.crt ${ABBR}/
-  cp -p $SERVER/ta.key           ${ABBR}/${SERVER}-ta.key
+  cp -p $SERVER/tls.key          ${ABBR}/${SERVER}-tls.key
+  if [ ! -e ./pki/root-ca.crt ]; then
+    # No root ca.
+    cp -p ./pki/ca.crt             ${ABBR}/${SERVER}-ca.crt
+    cp -p ./pki/issued/${ABBR}.crt ${ABBR}/
+  else
+    # There is a root ca.
+    echo "Creating client certificate chain."
+    cp -p ./pki/root-ca.crt        ${ABBR}/${SERVER}-ca.crt
+    cat ./pki/issued/${ABBR}.crt ./pki/ca.crt  >${ABBR}/${ABBR}.crt
+  fi
 else
   mkdir -p $ABBR/jail/tmp
   mkdir    $ABBR/jail/ccd
-  cp -p ./pki/ca.crt             ${ABBR}/
   cp -p ./pki/issued/${ABBR}.crt ${ABBR}/server.crt
-  cp -p ./pki/crl.pem            ${ABBR}/jail/
-  # Setup link for crl.pem.
-  ln -sf jail/crl.pem ${ABBR}/crl.pem
+  if [ ! -e ./pki/root-ca.crt ]; then
+    # No root ca.
+    cp -p ./pki/ca.crt             ${ABBR}/
+    cp -p ./pki/crl.pem            ${ABBR}/jail/
+    # Setup link for crl.pem.
+    ln -sf jail/crl.pem ${ABBR}/crl.pem
+  else
+    # There is a root ca.
+    mkdir    $ABBR/jail/ca
+    copy_ca ${ABBR} root-
+    copy_ca ${ABBR}
+    ln -sf jail/ca   ${ABBR}/ca
+  fi
   # Set jail directories ownership.
   chown -R nobody:nobody         ${ABBR}/jail
 fi
