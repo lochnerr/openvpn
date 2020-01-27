@@ -1,5 +1,7 @@
 #!/bin/sh
 
+set -e
+
 # Script to test the openvpn container.
 
 # This is run as part of the automated system unit tests by
@@ -40,7 +42,11 @@ server_test() {
   cd /etc/openvpn
 
   # Create server key and certificate signing request.
-  openvpn-init --port 7111 --net 10.77.123.0 --keysize 4096 --digest sha512 $BASENAME
+  easyrsa --batch init-pki
+  easyrsa --batch --dn-mode=cn_only --req-cn="'$BASENAME'" --use-algo=ec  --curve=secp521r1 --digest=sha256 gen-req ${BASENAME} nopass
+  mv pki/private/*.key server.key
+  mv pki/reqs/*.req .
+  rm -rf pki
 
   # Simulate receiving the "package" file from the CA.
   wait_file $BASENAME.tgz
@@ -137,29 +143,13 @@ sut_test() {
   mkdir -p /home/$CLIENT/.cert
 
   # Create client key and certificate signing request.
-  openvpn-init --port 7111 --keysize 4096 --digest sha512 --nopass --address vpn --target /home/$CLIENT/.cert $SERVER $CLIENT
-
-  # Simulate sending the client signing request to the CA.
-  cd /root/ca
-  mv /home/$CLIENT/.cert/$BASENAME.req .
-
-  # Sign the client request.
-  openvpn-sign $SERVER $CLIENT
-
-  # Simulate sending the client "package" to the client.
-  mv $BASENAME.tgz /home/$CLIENT/.cert/
-
-  # Untar the package.
   cd /home/$CLIENT/.cert
-  tar -xzf $BASENAME.tgz
-
-  # Remove the unneeded tar file.
-  rm $BASENAME.tgz
-
-  # List the directory contents.
-  echo "Directory listing for client:"
-  ls -lR
-  echo "====="
+  easyrsa --batch init-pki
+  easyrsa --batch --dn-mode=cn_only --req-cn="'${SERVER}-$CLIENT'" --use-algo=rsa --keysize=4096    --digest=sha256 gen-req ${SERVER}-$CLIENT nopass
+ #easyrsa --batch --dn-mode=cn_only --req-cn="'${SERVER}-$CLIENT'" --use-algo=ec  --curve=secp521r1 --digest=sha256 gen-req ${SERVER}-$CLIENT nopass
+  mv pki/private/*.key .
+  mv pki/reqs/*.req .
+  rm -rf pki
 
   # Simulate receiving the signing request from the server.
   wait_file /etc/openvpn/${SERVER}.req
@@ -180,19 +170,35 @@ sut_test() {
   # Sign the server request.
   cd /root/ca
   mv /etc/openvpn/${SERVER}.req .
-  openvpn-sign $SERVER
+  openvpn-package --port 7111 --net 10.77.123.0 $SERVER
 
   # Simulate sending the server "package" to the server.
   mv /root/ca/$SERVER.tgz /etc/openvpn/
 
-  # Get back to the client directory.
-  cd /home/$CLIENT/.cert
+  # Simulate sending the client signing request to the CA.
+  cd /root/ca
+  mv /home/$CLIENT/.cert/$BASENAME.req .
 
-  # Wait for the server to come up.
-  sleep 10
+  # Sign the client request.
+  openvpn-package --port 7111 --nopass --address vpn $SERVER $CLIENT
+
+  # Simulate sending the client "package" to the client.
+  mv $BASENAME.tgz /home/$CLIENT/.cert/
+
+  # Untar the package.
+  cd /home/$CLIENT/.cert
+  tar -xzf $BASENAME.tgz
+
+  # Remove the unneeded tar file.
+  rm $BASENAME.tgz
+
+  # List the directory contents.
+  echo "Directory listing for client:"
+  ls -lR
+  echo "====="
 
   # Start OpenVPN the client.
-  openvpn --config $BASENAME.ovpn &
+  openvpn --config $SERVER.ovpn &
 
   # Wait up to 5 minutes to connect to the vpn server.
   for try in  $(seq 0 150) ; do
