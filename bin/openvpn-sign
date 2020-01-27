@@ -1,4 +1,6 @@
-#!/bin/sh
+#!/bin/bash
+
+set -e
 
 # Sign a csr (certificate signing request) for an OpenVPN server or client.
 
@@ -10,14 +12,208 @@
 PROGRAM="${0##*/}"
 
 usage() {
-  echo "Usage: $PROGRAM <SERVER ABBR> <CLIENT ABBR>"
-  echo "       $PROGRAM <SERVER ABBR>"
+
   if [ ! -z "$1" ]; then
-    echo
-    echo "$1"
+    echo >&2
+    echo "$1" >&2
   fi
+
+  cat >&2 <<-__EOF__
+
+	Usage: $PROGRAM [OPTION]... SERVER_NAME [CLIENT_NAME]
+
+	Initialize OpenVPN configuration
+
+	  Common Settings:
+
+	  -p, --port                 Set port to use (default 1194).
+	  -h, --help                 Show this help
+
+	  Server Only Settings:
+
+	  -n, --net                  Server Network (default 10.8.0.0).
+	  -m, --mask                 Server Network Mask (default 255.255.255.0).
+	  -r, --route                Route to push to client.
+	  -z, --route_mask           Route network mask (default 255.255.255.0).
+
+	  Client Only Settings:
+
+	  -a, --address              Server Address (default SERVER_NAME).
+	 --nopass                    No client key password.
+
+	Client Example:
+
+	$PROGRAM --port 10000 -a 54.66.34.132 vpn.example.com user123
+
+	Server Example:
+
+	$PROGRAM --port 10000 -n 10.77.0.0 -m 255.255.0.0 -r 192.168.77.0 -z 255.255.255.0 vpn.example.com
+
+	__EOF__
+
   exit 1
 }
+
+# Before processing the command line options, source the "server" vars, if there are any.
+[ -n "$1" ] && [ -e $1/vars ] && . $1/vars
+
+# Command line options
+PARAMS=""
+
+while (( "$#" )); do
+  case "$1" in
+    -h|--help)
+      usage
+      ;;
+    -p|--port)
+      PORT="$2"
+      shift 2
+      ;;
+    -n|--net)
+      NETWORK="$2"
+      shift 2
+      ;;
+    -m|--mask)
+      NETMASK="$2"
+      shift 2
+      ;;
+    -r|--route)
+      ROUTE="$2"
+      shift 2
+      ;;
+    -z|--route_mask)
+      ROUTE_MASK="$2"
+      shift 2
+      ;;
+    -a|--address)
+      SERVER_ADDR="$2"
+      shift 2
+      ;;
+    --nopass)
+      OPTS="-nodes $OPTS"
+      shift
+      ;;
+    --) # end argument parsing
+      shift
+      break
+      ;;
+    -*|--*=) # unsupported flags
+      usage "Error: Unsupported flag $1"
+      ;;
+    *) # preserve positional arguments
+      PARAMS="$PARAMS $1"
+      shift
+      ;;
+  esac
+done
+
+# set positional arguments in their proper place
+eval set -- "$PARAMS"
+
+die() {
+  echo $1 >&2
+  exit 1
+}
+
+generate_server_config() {
+
+  echo "port $PORT"                                                >$CONFIG
+  echo "proto $PROTOCOL"                                          >>$CONFIG
+  echo "dev tun"                                                  >>$CONFIG
+  if [ -e pki/root-ca.crt ]; then
+    echo "capath /ca"                                             >>$CONFIG
+  else
+    echo "ca ca.crt"                                              >>$CONFIG
+    echo "crl-verify crl.pem"                                     >>$CONFIG
+  fi
+  echo "cert server.crt"                                          >>$CONFIG
+  echo "key server.key"                                           >>$CONFIG
+  if [ -n "$CURVE" ]; then
+    echo "dh none"                                                >>$CONFIG
+  else
+    echo "dh dh.pem"                                              >>$CONFIG
+    if [ ! -e $SERVER/dh.pem ]; then
+      easyrsa --batch --keysize=$KEYSIZE gen-dh
+      mv pki/dh.pem $SERVER/dh.pem
+    fi
+  fi
+  echo "topology subnet"                                          >>$CONFIG
+  echo "server $NETWORK $NETMASK"                                 >>$CONFIG
+  echo "#push 'route $ROUTE_NET $ROUTE_MASK'"                     >>$CONFIG
+  echo "client-config-dir /ccd"                                   >>$CONFIG
+  echo "keepalive 10 120"                                         >>$CONFIG
+  echo "tls-crypt tls.key"                                        >>$CONFIG
+  echo "cipher AES-256-GCM"                                       >>$CONFIG
+  echo "compress lz4-v2"                                          >>$CONFIG
+  echo "push 'compress lz4-v2'"                                   >>$CONFIG
+  echo "max-clients 20"                                           >>$CONFIG
+  echo "user $VUSER"                                              >>$CONFIG
+  echo "group $VGROUP"                                            >>$CONFIG
+  echo "persist-key"                                              >>$CONFIG
+  echo "persist-tun"                                              >>$CONFIG
+  echo "status openvpn-status.log"                                >>$CONFIG
+  echo "verb 4"                                                   >>$CONFIG
+  echo "chroot /etc/openvpn/jail"                                 >>$CONFIG
+  echo "remote-cert-eku 'TLS Web Client Authentication'"          >>$CONFIG
+  echo "tls-version-min 1.2"                                      >>$CONFIG
+  echo "tls-cipher TLS-ECDHE-ECDSA-WITH-AES-256-GCM-SHA384"       >>$CONFIG
+  echo "tls-server"                                               >>$CONFIG
+  if [ -n "$CURVE" ]; then
+    echo "ecdh-curve secp521r1"                                   >>$CONFIG
+  fi
+  echo "ncp-ciphers AES-256-GCM"                                  >>$CONFIG
+  echo "auth $DIGEST"                                             >>$CONFIG
+  echo "##gw client-to-client"                                    >>$CONFIG
+  echo "# After ccd"                                              >>$CONFIG
+  echo "## gw route 192.168.33.0 255.255.255.0"                   >>$CONFIG
+  echo "# Then create a file ccd/vpnclone-gw with this line:"     >>$CONFIG
+  echo "#   iroute 192.168.33.0 255.255.255.0"                    >>$CONFIG
+}
+
+generate_client_config() {
+
+  echo "client"                                                    >$CONFIG
+  echo "dev tun"                                                  >>$CONFIG
+  echo "proto $PROTOCOL"                                          >>$CONFIG
+  echo "remote ${SERVER_ADDR} $PORT"                              >>$CONFIG
+  echo "float"                                                    >>$CONFIG
+  echo "resolv-retry infinite"                                    >>$CONFIG
+  echo "nobind"                                                   >>$CONFIG
+  echo "# Downgrade privileges after initialization (non-Windows only)"   >>$CONFIG
+  echo "user $VUSER"                                              >>$CONFIG
+  echo "group $VGROUP"                                            >>$CONFIG
+  echo "persist-key"                                              >>$CONFIG
+  echo "persist-tun"                                              >>$CONFIG
+  echo "ca ${SERVER}-ca.crt"                                      >>$CONFIG
+  echo "cert ${SERVER}-${CLIENT}.crt"                             >>$CONFIG
+  echo "key ${SERVER}-${CLIENT}.key"                              >>$CONFIG
+  echo "remote-cert-tls server"                                   >>$CONFIG
+  echo "tls-crypt ${SERVER}-tls.key"                              >>$CONFIG
+  echo "verify-x509-name 'CN=${SERVER}'"                          >>$CONFIG
+  echo "remote-cert-eku 'TLS Web Server Authentication'"          >>$CONFIG
+  echo "cipher AES-256-GCM"                                       >>$CONFIG
+  echo "keepalive 10 120"                                         >>$CONFIG
+  echo "verb 4"                                                   >>$CONFIG
+  echo "tls-client"                                               >>$CONFIG
+  echo "tls-version-min 1.2"                                      >>$CONFIG
+  echo "tls-cipher TLS-ECDHE-ECDSA-WITH-AES-256-GCM-SHA384"       >>$CONFIG
+  echo "auth $DIGEST"                                             >>$CONFIG
+  echo "auth-nocache"                                             >>$CONFIG
+}
+
+write_value() {
+
+  [ -z "$1" ] && return
+
+  local value
+  eval value=\$$1
+
+  if [ -n "$value" ]; then
+    echo "$1='$value'" >>$VARS
+  fi
+}
+
+# Start of main.
 
 [ $# -lt 1 ] && usage
 
@@ -26,25 +222,86 @@ CLIENT="$2"
 ABBR="${1}-$2"
 [ -z "$2" ] && ABBR="$1"
 
-if [ ! -e ${ABBR}.req ]; then
-  echo "No signing request file found '${ABBR}.req'."
-  exit 1
+# If the signing request has not been imported, import it.
+if [ ! -e pki/reqs/${ABBR}.req ]; then
+  [ ! -e ${ABBR}.req ] && die "Error: No server signing request found in '${ABBR}.req'."
+  # Import the request.
+  echo "Importing the certificate signing request for ${ABBR}."
+  easyrsa --batch import-req ${ABBR}.req ${ABBR}
+  rm ${ABBR}.req
 fi
 
-# Import the signing request to easy rsa.
-easyrsa import-req ${ABBR}.req ${ABBR}
-
-# Delete the no longer needed request.
-rm ${ABBR}.req
-
-# Sign the request with easyrsa.
+# Determine if client or server.
 mode="client"
 [ -z "$CLIENT" ] && mode="server"
-if [ "$SIGNMODE"  = "test" ]; then
-  echo yes | easyrsa sign-req $mode ${ABBR}
-else
-  easyrsa sign-req $mode ${ABBR}
+
+# If this signing request has not been signed, sign it now.
+if [ ! -e pki/issued/${ABBR}.crt ]; then
+  # Sign the request with easyrsa.
+  if [ "$SIGNMODE"  = "test" ]; then
+    echo yes | easyrsa sign-req $mode ${ABBR}
+  else
+    easyrsa sign-req $mode ${ABBR}
+  fi
 fi
+
+# Pull information from certificate sign request.
+openssl req -noout -text -in pki/reqs/${ABBR}.req >temp-csrinfo.txt
+
+test="$(cat temp-csrinfo.txt | grep 'Public Key Algorithm:' || :)"
+res="$(echo $test | grep 'rsa' || :)"
+if [ -n "$res" ]; then
+  # RSA encryption so get key size.
+  test="$(cat temp-csrinfo.txt | grep 'RSA Public-Key:' || :)"
+  res="$(echo $test | awk '{print $3}')"
+  KEYSIZE="${res:1}"
+  CURVE=""
+  echo "RSA Encryption ($KEYSIZE bit)."
+else
+  # EC encryption so get curve.
+  echo "ASN1 OID: secp521r1"
+  test="$(cat temp-csrinfo.txt | grep 'ASN1 OID:' || :)"
+  res="$(echo $test | grep 'ASN1' || :)"
+  CURVE="$(echo $res | awk '{print $3}')"
+  echo "Elliptic Curve Encryption ($CURVE)."
+fi
+
+# Figure out the digest for the certificate.
+test="$(cat temp-csrinfo.txt | grep 'Signature Algorithm: ' || :)"
+echo $test | grep -i sha512 >/dev/null && res="sha512"
+echo $test | grep -i sha384 >/dev/null && res="sha384"
+echo $test | grep -i sha256 >/dev/null && res="sha256"
+echo $test | grep -i sha224 >/dev/null && res="sha224"
+echo $test | grep -i sha1 >/dev/null && res="sha1"
+DIGEST="sha1"
+[ -n "$res" ] && DIGEST="$res"
+echo "DIGEST is $DIGEST"
+
+rm temp-csrinfo.txt
+
+# Update the server vars that have been set.
+mkdir -p $SERVER
+VARS="$SERVER/vars"
+rm -f $VARS
+write_value PORT
+write_value NETWORK
+write_value NETMASK
+write_value ROUTE_MASK
+write_value SERVER_ADDR
+write_value PROTOCOL
+write_value VUSER
+write_value VGROUP
+
+# Set the default values for all options.
+
+PORT="${PORT:-1194}"
+NETWORK="${NETWORK:-10.8.0.0}"
+NETMASK="${NETMASK:-255.255.255.0}"
+ROUTE_MASK="${ROUTE_MASK:-255.255.255.0}"
+SERVER_ADDR="${SERVER_ADDR:-$SERVER}"
+PROTOCOL="${PROTOCOL:-udp}"
+VUSER="${VUSER:-nobody}"
+VGROUP="${VGROUP:-nobody}"
 
 # Create the results directory, if necessary.
 mkdir -p $ABBR
@@ -76,6 +333,9 @@ copy_ca() {
 }
 
 if [ "$mode" = "client" ]; then
+  mkdir -p $ABBR
+  CONFIG="$ABBR/${SERVER}.ovpn"
+  generate_client_config
   cp -p $SERVER/tls.key          ${ABBR}/${SERVER}-tls.key
   if [ ! -e ./pki/root-ca.crt ]; then
     # No root ca.
@@ -90,6 +350,9 @@ if [ "$mode" = "client" ]; then
 else
   mkdir -p $ABBR/jail/tmp
   mkdir    $ABBR/jail/ccd
+  CONFIG="$ABBR/server.ovpn"
+  generate_server_config
+  ln -s server.ovpn ${ABBR}/openvpn.conf
   cp -p ./pki/issued/${ABBR}.crt ${ABBR}/server.crt
   if [ ! -e ./pki/root-ca.crt ]; then
     # No root ca.
@@ -113,5 +376,5 @@ echo "Tar the results."
 tar -czf ${ABBR}.tgz -C $ABBR .
 
 # If client, delete the working directory.
-[ "$mode" = "client" ] && rm -rf $ABBR
+[ "$mode" = "client" ] && rm -rf $ABBR || true
 
