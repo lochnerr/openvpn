@@ -40,6 +40,7 @@ usage() {
 
 	  -a, --address              Server Address (default SERVER_NAME).
 	 --nopass                    No client key password.
+	 --test                      Set test mode.
 
 	Client Example:
 
@@ -91,6 +92,10 @@ while (( "$#" )); do
       ;;
     --nopass)
       OPTS="-nodes $OPTS"
+      shift
+      ;;
+    --test)
+      SIGNMODE="test"
       shift
       ;;
     --) # end argument parsing
