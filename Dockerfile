@@ -21,6 +21,16 @@ LABEL MAINTAINER Richard Lochner, Clone Research Corp. <lochner@clone1.com> \
 
 RUN apk add --update --no-cache openvpn openssl tini easy-rsa bash openssh
 
+
+# Secure the ssh daemon configuration.
+RUN cp -p /etc/ssh/sshd_config /etc/ssh/sshd_config.bak \
+ && sed -i \
+   -e 's:^#HostKey.*/etc/ssh/ssh_host_ed25519_key:HostKey /etc/ssh/ssh_host_ed25519_key:' \
+   -e '/^# Ciphers and keying.*/a KexAlgorithms curve25519-sha256@libssh.org\nCiphers chacha20-poly1305@openssh.com,aes256-gcm@openssh.com,aes128-gcm@openssh.com,aes256-ctr,aes192-ctr,aes128-ctr\nMACs hmac-sha2-512-etm@openssh.com,hmac-sha2-256-etm@openssh.com,umac-128-etm@openssh.com' \
+   -e 's:^#LogLevel.*:LogLevel VERBOSE:' \
+   -e 's:^Subsystem.*sftp.*:Subsystem	sftp	/usr/lib/ssh/sftp-server -f AUTHPRIV -l INFO:' \
+   /etc/ssh/sshd_config
+
 RUN mv /usr/share/easy-rsa/* /usr/local/bin/ \
  && sed \
       # Don't want to force certificate renewal often.
