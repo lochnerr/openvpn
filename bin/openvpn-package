@@ -354,10 +354,10 @@ if [ "$mode" = "client" ]; then
   fi
 else
   mkdir -p $ABBR/jail/tmp
-  mkdir    $ABBR/jail/ccd
+  mkdir -p $ABBR/jail/ccd
   CONFIG="$ABBR/server.ovpn"
   generate_server_config
-  ln -s server.ovpn ${ABBR}/openvpn.conf
+  ln -sf server.ovpn ${ABBR}/openvpn.conf
   cp -p ./pki/issued/${ABBR}.crt ${ABBR}/server.crt
   if [ ! -e ./pki/root-ca.crt ]; then
     # No root ca.
@@ -367,7 +367,7 @@ else
     ln -sf jail/crl.pem ${ABBR}/crl.pem
   else
     # There is a root ca.
-    mkdir    $ABBR/jail/ca
+    mkdir -p $ABBR/jail/ca
     copy_ca ${ABBR} root-
     copy_ca ${ABBR}
     ln -sf jail/ca   ${ABBR}/ca
