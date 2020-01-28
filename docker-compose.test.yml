@@ -9,8 +9,6 @@ services:
     command: /usr/local/bin/openvpn-test-ca subca
     restart: "no"
     hostname: ca.example.com
-    volumes:
-      - test:/etc/openvpn
     networks:
       - openvpn
 
