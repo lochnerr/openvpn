@@ -3,10 +3,19 @@ version: "3.2"
 # OpenVPN container automated test compose file.
 
 services:
+  rootca:
+    image: lochnerr/openvpn:latest
+    privileged: true
+    command: /usr/local/bin/openvpn-test-ca
+    restart: "no"
+    hostname: rootca.example.com
+    networks:
+      - openvpn
+
   ca:
     image: lochnerr/openvpn:latest
     privileged: true
-    command: /usr/local/bin/openvpn-test-ca subca
+    command: /usr/local/bin/openvpn-test-ca
     restart: "no"
     hostname: ca.example.com
     networks:
