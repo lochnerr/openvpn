@@ -6,7 +6,7 @@ services:
   rootca:
     image: lochnerr/openvpn:latest
     privileged: true
-    command: /usr/local/bin/openvpn-test-ca
+    command: /usr/local/bin/openvpn-test-sshd
     restart: "no"
     hostname: rootca.example.com
     networks:
@@ -15,7 +15,7 @@ services:
   ca:
     image: lochnerr/openvpn:latest
     privileged: true
-    command: /usr/local/bin/openvpn-test-ca
+    command: /usr/local/bin/openvpn-test-sshd
     restart: "no"
     hostname: ca.example.com
     networks:

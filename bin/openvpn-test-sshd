@@ -1,0 +1,23 @@
+#!/bin/sh
+
+# Run ssh daemon in container.
+
+# Generate a host key.
+ssh-keygen -t ed25519 -N "" -f /etc/ssh/ssh_host_ed25519_key
+
+# Add test key for root access.
+mkdir -p /root/.ssh
+cat /etc/testing/id_ed25519_testing.pub >>/root/.ssh/authorized_keys
+
+# Unlock the root account.
+passwd -u root
+
+# Run the ssh daemon.
+/usr/sbin/sshd -f /etc/ssh/sshd_config
+
+# Wait for shutdown signal.
+while true ; do
+  [ -e /etc/shutdown-signal ] && break
+  sleep 1s
+done
+

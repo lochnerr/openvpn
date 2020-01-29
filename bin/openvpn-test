@@ -31,7 +31,7 @@ server_test() {
   # Wait for the certificate authority container to come up.
   sleep 2s
   for try in $(seq 0 30) ; do
-    if scp $SSH_OPTS root@ca:/etc/openvpn/ca-is-ready . ; then
+    if [ -e /etc/openvpn/ca-is-ready ]; then
       rm /etc/openvpn/ca-is-ready
       break
     fi
@@ -89,11 +89,14 @@ server_test() {
   # Wait up to 5 minutes to client to connect and issue stop signal.
   for try in $(seq 0 150); do
     sleep 2s
-    [ -e /etc/openvpn/stop ] && break
+    [ -e /etc/openvpn/shutdown-signal ] && break
   done
 }
 
 sut_test() {
+
+  openvpn-test-create-ca subca
+  touch /etc/openvpn/ca-is-ready
 
   wait_file /etc/openvpn/server-is-ready
   rm /etc/openvpn/server-is-ready
@@ -122,7 +125,7 @@ sut_test() {
   rm /home/$CLIENT/.cert/$BASENAME.req
 
   # Sign the client request.
-   ssh $SSH_OPTS root@ca <<-__EOD__
+  ssh $SSH_OPTS root@ca <<-__EOD__
 	openvpn-package --port 7111 --nopass --address vpn --test $SERVER $CLIENT
 	__EOD__
 
@@ -170,8 +173,9 @@ sut_test() {
   done
 
   # Tell the vpn server to stop.
-  touch /etc/openvpn/stop
-  scp $SSH_OPTS /etc/openvpn/stop root@ca:/etc/openvpn/stop
+  touch /etc/openvpn/shutdown-signal
+  scp $SSH_OPTS /etc/openvpn/shutdown-signal root@rootca:/etc/
+  scp $SSH_OPTS /etc/openvpn/shutdown-signal root@ca:/etc/
 
   # Wait a little for the server to stop.
   sleep 5s

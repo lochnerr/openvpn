@@ -1,0 +1,75 @@
+#!/bin/sh
+
+# Create a root and a sub CA or a standalone CA.
+
+SSH_OPTS="-o IdentitiesOnly=true -o StrictHostKeyChecking=no -i /etc/testing/id_ed25519_testing"
+
+if [ -n "$1" ]; then
+
+  # Login and create the "root" ca.
+  ssh $SSH_OPTS root@rootca <<-__EOD__
+	easyrsa --batch init-pki
+	easyrsa --batch --dn-mode=cn_only --req-cn="'Root CA'" build-ca nopass
+	easyrsa gen-crl
+	__EOD__
+
+  # Save the "root" ca certificate and crl.
+  scp $SSH_OPTS root@rootca:pki/ca.crt   root-ca.crt
+  scp $SSH_OPTS root@rootca:pki/crl.pem  root-crl.pem
+
+  # Display the "root" certificate.
+  echo "Root CA:"
+  openssl x509 -noout -text -in  root-ca.crt | grep "CN ="
+
+  # Login and create the "sub" ca certificate sign request.
+  ssh $SSH_OPTS root@ca <<-__EOD__
+	easyrsa --batch init-pki
+	easyrsa --batch --dn-mode=cn_only --req-cn="'Signer #1 CA'" build-ca nopass subca
+	__EOD__
+
+  # Copy the "sub" ca certificate sign request.
+  scp $SSH_OPTS root@ca:pki/reqs/ca.req  subca1.req
+
+  # Upload this to the "root" ca.
+  scp $SSH_OPTS subca1.req root@rootca:.
+  rm subca1.req
+
+  # Login to the "root" ca and sign the "sub" sign request.
+  ssh $SSH_OPTS root@rootca <<-__EOD__
+	# Import the "sub" ca sign request into the "root" ca.
+	easyrsa --batch import-req subca1.req subca1
+	# Sign the "sub" ca request.
+	easyrsa --batch sign-req ca subca1
+	easyrsa gen-crl
+	__EOD__
+
+  # Copy the signed ca certificate from the "root" ca.
+  scp $SSH_OPTS root@rootca:pki/issued/subca1.crt ca.crt
+
+  # Upload the signed certificate into the "sub" ca.
+  scp $SSH_OPTS ca.crt root@ca:pki/
+
+  # Copy the "root" ca certificate and crl to the "sub" ca.
+  scp $SSH_OPTS root-ca.crt  root@ca:pki/
+  scp $SSH_OPTS root-crl.pem root@ca:pki/
+  rm root-ca.crt root-crl.pem
+
+else
+
+  # Login and create a standalone ca.
+  ssh $SSH_OPTS root@ca <<-__EOD__
+	easyrsa --batch init-pki
+	easyrsa --batch --dn-mode=cn_only --req-cn="'Standalone CA'" build-ca nopass
+	easyrsa gen-crl
+	__EOD__
+
+  # Copy the ca certificate so it can be displayed.
+  scp $SSH_OPTS root@ca:pki/ca.crt ca.crt
+
+fi
+
+# Display the signing certificate.
+echo "Signing CA:"
+openssl x509 -noout -text -in ca.crt | grep "CN ="
+rm ca.crt
+
