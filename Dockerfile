@@ -51,6 +51,7 @@ RUN mv /usr/share/easy-rsa/* /usr/local/bin/ \
  && mkdir /etc/openvpn
 
 COPY bin/. /usr/local/bin/
+COPY testing/dh*.pem /etc/testing/
 
 VOLUME  /etc/openvpn
 WORKDIR /etc/openvpn
