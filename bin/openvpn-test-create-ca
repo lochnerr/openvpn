@@ -4,7 +4,7 @@
 
 SSH_OPTS="-o IdentitiesOnly=true -o StrictHostKeyChecking=no -i /etc/testing/id_ed25519_testing"
 
-if [ -n "$1" ]; then
+if [ "$1" = "subca" ]; then
 
   # Login and create the "root" ca.
   ssh $SSH_OPTS root@rootca <<-__EOD__
@@ -71,5 +71,10 @@ fi
 # Display the signing certificate.
 echo "Signing CA:"
 openssl x509 -noout -text -in ca.crt | grep "CN ="
-rm ca.crt
+rm -f ca.crt
+
+# Copy test diffie-hellman parameters to the ca.
+if [ -n "$(ls /etc/testing/dh*.pem 2>/dev/null || :)" ]; then
+  scp $SSH_OPTS /etc/testing/dh*.pem  root@ca:pki/
+fi
 
