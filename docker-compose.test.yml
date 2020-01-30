@@ -5,7 +5,6 @@ version: "3.2"
 services:
   rootca:
     image: lochnerr/openvpn:latest
-    privileged: true
     command: /usr/local/bin/openvpn-test-sshd
     restart: "no"
     hostname: rootca.example.com
@@ -14,25 +13,77 @@ services:
 
   ca:
     image: lochnerr/openvpn:latest
-    privileged: true
     command: /usr/local/bin/openvpn-test-sshd
     restart: "no"
     hostname: ca.example.com
     networks:
       - openvpn
 
-  vpn:
+  vpn1:
     image: lochnerr/openvpn:latest
     privileged: true
-    command: /usr/local/bin/openvpn-test server
+    command: /usr/local/bin/openvpn-test-server ec  7111 10.77.123.0 3
     restart: "no"
-    hostname: vpn.example.com
+    hostname: vpn1.example.com
     volumes:
-      - test:/etc/openvpn
+      - test:/etc/shared
     networks:
       - openvpn
-    depends_on:
-      - ca
+
+  vpn2:
+    image: lochnerr/openvpn:latest
+    privileged: true
+    command: /usr/local/bin/openvpn-test-server rsa 7112 10.77.123.0 5
+    restart: "no"
+    hostname: vpn2.example.com
+    volumes:
+      - test:/etc/shared
+    networks:
+      - openvpn
+
+  client1:
+    image: lochnerr/openvpn:latest
+    privileged: true
+    command: /usr/local/bin/openvpn-test-client ec  7111 vpn1.example.com client1 active   10
+    restart: "no"
+    hostname: client1.example.com
+    volumes:
+      - test:/etc/shared
+    networks:
+      - openvpn
+
+  client2:
+    image: lochnerr/openvpn:latest
+    privileged: true
+    command: /usr/local/bin/openvpn-test-client ec  7111 vpn1.example.com client2 revoked  15
+    restart: "no"
+    hostname: client2.example.com
+    volumes:
+      - test:/etc/shared
+    networks:
+      - openvpn
+
+  client3:
+    image: lochnerr/openvpn:latest
+    privileged: true
+    command: /usr/local/bin/openvpn-test-client rsa 7112 vpn2.example.com client3 active   20
+    restart: "no"
+    hostname: client3.example.com
+    volumes:
+      - test:/etc/shared
+    networks:
+      - openvpn
+
+  client4:
+    image: lochnerr/openvpn:latest
+    privileged: true
+    command: /usr/local/bin/openvpn-test-client rsa 7112 vpn2.example.com client4 revoked  25
+    restart: "no"
+    hostname: client4.example.com
+    volumes:
+      - test:/etc/shared
+    networks:
+      - openvpn
 
   sut:
     image: lochnerr/openvpn:latest
@@ -41,12 +92,12 @@ services:
     restart: "no"
     hostname: sut.example.com
     volumes:
-      - test:/etc/openvpn
+      - test:/etc/shared
     networks:
       - openvpn
     depends_on:
+      - rootca
       - ca
-      - vpn
 
 volumes:
   test:
