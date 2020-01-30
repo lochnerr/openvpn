@@ -14,191 +14,74 @@ set -e
 
 # Wait for a file to appear on shared volume.
 wait_file() {
-  for try in $(seq -s ' ' 1 36) ; do
+  echo "Waiting for $1."
+  for try in $(seq -s ' ' 1 ${2:-180}) ; do
     if [ -e "$1" ]; then
       echo "File $1 is available!"
       sleep 2
       return 0
     fi
-    sleep 5;
+    sleep 1
   done
   echo "Error: file $1 is not available!"
   exit 1
 }
 
-server_test() {
-
-  # Wait for the certificate authority container to come up.
-  sleep 2s
-  for try in $(seq 0 30) ; do
-    if [ -e /etc/openvpn/ca-is-ready ]; then
-      rm /etc/openvpn/ca-is-ready
-      break
-    fi
-    sleep 1s
-  done
-
-  echo "Running Server Tests"
-
-  BASENAME="$(hostname -f)"
-
-  # Get into the openvpn directory.
-  cd /etc/openvpn
-
-  # Create server key and certificate signing request.
-  easyrsa --batch init-pki
-  easyrsa --batch --dn-mode=cn_only --req-cn="'$BASENAME'" --use-algo=ec  --curve=secp521r1 --digest=sha256 gen-req ${BASENAME} nopass
-  mv pki/private/*.key server.key
-  mv pki/reqs/*.req .
-  rm -rf pki
-
-  # Send the server csr to the ca.
-  scp $SSH_OPTS /etc/openvpn/${BASENAME}.req root@ca:.
-  rm /etc/openvpn/${BASENAME}.req
-
-  # Sign the request and create the package.
-   ssh $SSH_OPTS root@ca <<-__EOD__
-	openvpn-package --port 7111 --net 10.77.123.0 --test ${BASENAME}
-	__EOD__
-
-  # At this point there will be no more ca activities, so inform the client container that it can continue.
-  touch /etc/openvpn/server-is-ready
-
-  # Wait for the client so we can test for revoked certificates.
-  wait_file /etc/openvpn/client-is-ready
-  rm /etc/openvpn/client-is-ready
-
-  # Get the server "package" from the ca.
-  scp $SSH_OPTS root@ca:${BASENAME}.tgz .
-
-  # Extract the results.
-  tar -xzf $BASENAME.tgz
-
-  # Remove the unneeded tar file.
-  rm $BASENAME.tgz
-
-  # List the directory contents.
-  echo "Directory listing for server:"
-  ls -lR
-  echo "====="
-
-  echo "Starting OpenVPN server."
-
-  openvpn --config openvpn.conf &
-
-  # Wait up to 5 minutes to client to connect and issue stop signal.
-  for try in $(seq 0 150); do
-    sleep 2s
-    [ -e /etc/openvpn/shutdown-signal ] && break
-  done
-}
-
 sut_test() {
 
   openvpn-test-create-ca subca
-  touch /etc/openvpn/ca-is-ready
+  touch /etc/shared/ca-is-ready
 
-  wait_file /etc/openvpn/server-is-ready
-  rm /etc/openvpn/server-is-ready
+  mkdir -p /etc/shared/servers
+  mkdir -p /etc/shared/clients
 
-  echo "Running sut (client) Tests"
+  echo "Running sut tests"
 
-  BASENAME="${SERVER}-$CLIENT"
-  export SIGNMODE="test"
-
-  REVOKE="Xtrue"
-
-  # Create the client directory.
-  mkdir -p /home/$CLIENT/.cert
-
-  # Create client key and certificate signing request.
-  cd /home/$CLIENT/.cert
-  easyrsa --batch init-pki
-  easyrsa --batch --dn-mode=cn_only --req-cn="'${SERVER}-$CLIENT'" --use-algo=rsa --keysize=4096    --digest=sha256 gen-req ${SERVER}-$CLIENT nopass
- #easyrsa --batch --dn-mode=cn_only --req-cn="'${SERVER}-$CLIENT'" --use-algo=ec  --curve=secp521r1 --digest=sha256 gen-req ${SERVER}-$CLIENT nopass
-  mv pki/private/*.key .
-  mv pki/reqs/*.req .
-  rm -rf pki
-
-  # Send the client signing request to the CA.
-  scp $SSH_OPTS /home/$CLIENT/.cert/$BASENAME.req root@ca:.
-  rm /home/$CLIENT/.cert/$BASENAME.req
-
-  # Sign the client request.
-  ssh $SSH_OPTS root@ca <<-__EOD__
-	openvpn-package --port 7111 --nopass --address vpn --test $SERVER $CLIENT
-	__EOD__
-
-  # Get the client "package" from the ca.
-  scp $SSH_OPTS root@ca:$BASENAME.tgz /home/$CLIENT/.cert/
-
-  # Untar the package.
-  cd /home/$CLIENT/.cert
-  tar -xzf $BASENAME.tgz
-
-  # Remove the unneeded tar file.
-  rm $BASENAME.tgz
-
-  # List the directory contents.
-  echo "Directory listing for client:"
-  ls -lR
-  echo "====="
-
-  if [ "$REVOKE" = "true" ]; then
-    echo "Testing revoked certificate: ${BASENAME}."
-    # Revoke the client key.
-    ssh $SSH_OPTS root@ca <<-__EOD__
-	easyrsa --batch revoke ${BASENAME}
-	easyrsa gen-crl
-	# Build a new package for the server.
-	openvpn-package --port 7111 --net 10.77.123.0 --test ${SERVER}
-	__EOD__
-  fi
-
-  touch /etc/openvpn/client-is-ready
-
-  # Start OpenVPN the client.
-  openvpn --config $SERVER.ovpn &
-
-  # Wait up to 5 minutes to connect to the vpn server.
-  for try in  $(seq 0 150) ; do
+  # Wait for all clients to become ready.
+  for file in $(ls /etc/shared/clients) ; do
+    wait_file /etc/shared/${file}.ready 60
+    rm /etc/shared/${file}.ready
     sleep 2s
-    echo "Checking for vpn connectivity."
-    if ping -c 5 -W 1 10.77.123.1 >/dev/null 2>&1 ; then
-      echo "VPN is up!"
-      break
+  done
+  touch /etc/shared/clients-are-ready
+
+  echo "Clients are up!"
+
+  # Wait for all clients to connect (or not).
+  ERRS=""
+  for file in $(ls /etc/shared/clients) ; do
+    touch /etc/shared/${file}.continue
+    wait_file /etc/shared/${file}.status 180
+    EXPECTED="$(cat /etc/shared/clients/$file)"
+    if [ "$(cat /etc/shared/${file}.status)" = "$EXPECTED" ]; then
+      echo "Info: Client test passed, $file status ${EXPECTED}."
     else
-      echo "VPN is not up yet!"
+      echo "Error: Client test failed, $file status $(cat /etc/shared/${file}.status)."
+      ERRS="true"
     fi
+    rm /etc/shared/${file}.status
   done
 
-  # Tell the vpn server to stop.
-  touch /etc/openvpn/shutdown-signal
-  scp $SSH_OPTS /etc/openvpn/shutdown-signal root@rootca:/etc/
-  scp $SSH_OPTS /etc/openvpn/shutdown-signal root@ca:/etc/
+  # Tell the vpn servers and certificate authorities to stop.
+  touch /etc/shared/shutdown-signal
+  scp $SSH_OPTS /etc/shared/shutdown-signal root@rootca:/etc/
+  scp $SSH_OPTS /etc/shared/shutdown-signal root@ca:/etc/
 
   # Wait a little for the server to stop.
   sleep 5s
+
+  if [ -z "$ERRS" ]; then
+    echo "Info: All client tests passed!"
+  else
+    echo "Error: One or more client tests failed!"
+  fi
 }
 
 # Start
 
-SERVER="vpn.$(hostname -d)"
-CLIENT="testuser"
 SSH_OPTS="-o IdentitiesOnly=true -o StrictHostKeyChecking=no -i /etc/testing/id_ed25519_testing"
 
-hns="$(hostname -s)"
-if [ "$hns" = "vpn" ]; then
-  server_test
-elif [ "$hns" = "sut" ]; then
-  sut_test
-else
-  exit 1
-fi
-
-echo "Processes: "
-ps aux
-echo "====="
+sut_test
 
 echo "Done!"
 
