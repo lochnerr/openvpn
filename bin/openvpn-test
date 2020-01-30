@@ -72,8 +72,10 @@ sut_test() {
 
   if [ -z "$ERRS" ]; then
     echo "Info: All client tests passed!"
+    exit 0
   else
     echo "Error: One or more client tests failed!"
+    exit 1
   fi
 }
 
@@ -82,6 +84,4 @@ sut_test() {
 SSH_OPTS="-o IdentitiesOnly=true -o StrictHostKeyChecking=no -i /etc/testing/id_ed25519_testing"
 
 sut_test
-
-echo "Done!"
 
