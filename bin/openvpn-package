@@ -137,10 +137,13 @@ generate_server_config() {
     echo "dh none"                                                >>$CONFIG
   else
     echo "dh dh.pem"                                              >>$CONFIG
-    if [ ! -e $SERVER/dh.pem ]; then
+    if [ ! -e pki/dh${KEYSIZE}.pem ]; then
       easyrsa --batch --keysize=$KEYSIZE gen-dh
-      mv pki/dh.pem $SERVER/dh.pem
+      mv pki/dh.pem pki/dh${KEYSIZE}.pem
+    else
+      echo "Using existing dh${KEYSIZE}.pem."
     fi
+    cp -p pki/dh${KEYSIZE}.pem $SERVER/dh.pem
   fi
   echo "topology subnet"                                          >>$CONFIG
   echo "server $NETWORK $NETMASK"                                 >>$CONFIG
@@ -251,13 +254,13 @@ if [ ! -e pki/issued/${ABBR}.crt ]; then
 fi
 
 # Pull information from certificate sign request.
-openssl req -noout -text -in pki/reqs/${ABBR}.req >temp-csrinfo.txt
+openssl req -noout -text -in pki/reqs/${ABBR}.req >${ABBR}-csrinfo.txt
 
-test="$(cat temp-csrinfo.txt | grep 'Public Key Algorithm:' || :)"
+test="$(cat ${ABBR}-csrinfo.txt | grep 'Public Key Algorithm:' || :)"
 res="$(echo $test | grep 'rsa' || :)"
 if [ -n "$res" ]; then
   # RSA encryption so get key size.
-  test="$(cat temp-csrinfo.txt | grep 'RSA Public-Key:' || :)"
+  test="$(cat ${ABBR}-csrinfo.txt | grep 'RSA Public-Key:' || :)"
   res="$(echo $test | awk '{print $3}')"
   KEYSIZE="${res:1}"
   CURVE=""
@@ -265,14 +268,14 @@ if [ -n "$res" ]; then
 else
   # EC encryption so get curve.
   echo "ASN1 OID: secp521r1"
-  test="$(cat temp-csrinfo.txt | grep 'ASN1 OID:' || :)"
+  test="$(cat ${ABBR}-csrinfo.txt | grep 'ASN1 OID:' || :)"
   res="$(echo $test | grep 'ASN1' || :)"
   CURVE="$(echo $res | awk '{print $3}')"
   echo "Elliptic Curve Encryption ($CURVE)."
 fi
 
 # Figure out the digest for the certificate.
-test="$(cat temp-csrinfo.txt | grep 'Signature Algorithm: ' || :)"
+test="$(cat ${ABBR}-csrinfo.txt | grep 'Signature Algorithm: ' || :)"
 echo $test | grep -i sha512 >/dev/null && res="sha512"
 echo $test | grep -i sha384 >/dev/null && res="sha384"
 echo $test | grep -i sha256 >/dev/null && res="sha256"
@@ -282,7 +285,7 @@ DIGEST="sha1"
 [ -n "$res" ] && DIGEST="$res"
 echo "DIGEST is $DIGEST"
 
-rm temp-csrinfo.txt
+rm ${ABBR}-csrinfo.txt
 
 # Update the server vars that have been set.
 mkdir -p $SERVER
@@ -313,7 +316,6 @@ mkdir -p $ABBR
 
 # Create the tls authentication param, if necessary.
 if [ ! -e ${SERVER}/tls.key ]; then
-  mkdir -p ${SERVER}
   # Generate the tls handshake shared secret.
   openvpn --genkey --secret $SERVER/tls.key
   chmod 600 $SERVER/tls.key
@@ -333,12 +335,9 @@ copy_ca() {
   mkdir -p $dest/jail/ca
   cp -p pki/${pfx}ca.crt   $dest/jail/ca/${hash}.0
   cp -p pki/${pfx}crl.pem  $dest/jail/ca/${hash}.r0
-  echo "\npki/${pfx}crl.pem:"
-  openssl crl -noout -text -in pki/${pfx}crl.pem
 }
 
 if [ "$mode" = "client" ]; then
-  mkdir -p $ABBR
   CONFIG="$ABBR/${SERVER}.ovpn"
   generate_client_config
   cp -p $SERVER/tls.key          ${ABBR}/${SERVER}-tls.key
@@ -374,6 +373,7 @@ else
   fi
   # Set jail directories ownership.
   chown -R nobody:nobody         ${ABBR}/jail
+  ls -lR ${ABBR}
 fi
 
 # Tar the package.
