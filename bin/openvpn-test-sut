@@ -7,11 +7,6 @@ set -e
 # This is run as part of the automated system unit tests by
 # docker-compose.test.yml.  
 
-# The test process is:
-# 1) Create and start a server container.
-# 2) Create and start a client container.
-# 3) Verify that the client can ping the server.
-
 # Wait for a file to appear on shared volume.
 wait_file() {
   echo "Waiting for $1."
@@ -27,62 +22,64 @@ wait_file() {
   exit 1
 }
 
-sut_test() {
-
-  openvpn-test-create-ca subca
-  touch /etc/shared/ca-is-ready
-
-  mkdir -p /etc/shared/servers
-  mkdir -p /etc/shared/clients
-
-  echo "Running sut tests"
-
-  # Wait for all clients to become ready.
-  for file in $(ls /etc/shared/clients) ; do
-    wait_file /etc/shared/${file}.ready 60
-    rm /etc/shared/${file}.ready
-    sleep 2s
-  done
-  touch /etc/shared/clients-are-ready
-
-  echo "Clients are up!"
-
-  # Wait for all clients to connect (or not).
-  ERRS=""
-  for file in $(ls /etc/shared/clients) ; do
-    echo "Signaling /etc/shared/${file}.continue."
-    touch /etc/shared/${file}.continue
-    wait_file /etc/shared/${file}.status 180
-    EXPECTED="$(cat /etc/shared/clients/$file)"
-    if [ "$(cat /etc/shared/${file}.status)" = "$EXPECTED" ]; then
-      echo "Info: Client test passed, $file status ${EXPECTED}."
-    else
-      echo "Error: Client test failed, $file status $(cat /etc/shared/${file}.status)."
-      ERRS="true"
-    fi
-    rm /etc/shared/${file}.status
-  done
-
-  # Tell the vpn servers and certificate authorities to stop.
-  touch /etc/shared/shutdown-signal
-  scp $SSH_OPTS /etc/shared/shutdown-signal root@rootca:/etc/
-  scp $SSH_OPTS /etc/shared/shutdown-signal root@ca:/etc/
-
-  # Wait a little for the server to stop.
-  sleep 5s
-
-  if [ -z "$ERRS" ]; then
-    echo "Info: All client tests passed!"
-    exit 0
-  else
-    echo "Error: One or more client tests failed!"
-    exit 1
-  fi
+signal() {
+  echo "Signaling ${1}."
+  [ -n "$1" ] && echo "$2" >>$1
 }
-
-# Start
 
 SSH_OPTS="-o IdentitiesOnly=true -o StrictHostKeyChecking=no -i /etc/testing/id_ed25519_testing"
 
-sut_test
+echo "Running sut tests"
+
+# Make directories for signaling.
+mkdir -p /etc/shared/servers
+mkdir -p /etc/shared/clients
+
+# Create the certificate authorities.
+openvpn-test-create-ca subca
+
+# Signal that the signing certificate authority is ready for requests.
+signal /etc/shared/ca-is-ready
+
+# Wait for all clients to become ready.
+for file in $(ls /etc/shared/clients) ; do
+  wait_file /etc/shared/${file}.ready 60
+  rm /etc/shared/${file}.ready
+  sleep 2s
+done
+
+# Notify the servers that the clients are ready.
+signal /etc/shared/clients-are-ready
+echo "Clients are up!"
+
+# Wait for each client to connect or fail if its key has been revoked.
+ERRS=""
+for file in $(ls /etc/shared/clients) ; do
+  signal /etc/shared/${file}.continue
+  wait_file /etc/shared/${file}.status 180
+  EXPECTED="$(cat /etc/shared/clients/$file)"
+  if [ "$(cat /etc/shared/${file}.status)" = "$EXPECTED" ]; then
+    echo "Info: Client test passed, $file status ${EXPECTED}."
+  else
+    echo "Error: Client test failed, $file status $(cat /etc/shared/${file}.status)."
+    ERRS="true"
+  fi
+  rm /etc/shared/${file}.status
+done
+
+# Tell the vpn servers and certificate authorities to stop.
+signal /etc/shared/shutdown-signal
+scp $SSH_OPTS /etc/shared/shutdown-signal root@rootca:/etc/
+scp $SSH_OPTS /etc/shared/shutdown-signal root@ca:/etc/
+
+# Wait a little for the other containers to stop.
+sleep 2s
+
+if [ -z "$ERRS" ]; then
+  echo "Info: All client tests passed!"
+  exit 0
+else
+  echo "Error: One or more client tests failed!"
+  exit 1
+fi
 

@@ -17,11 +17,16 @@ wait_file() {
   done
 }
 
+signal() {
+  echo "Signaling ${1}."
+  [ -n "$1" ] && echo "$2" >>$1
+}
+
 BASENAME="$(hostname -f)"
 [ "$1" = "client" ] && BASENAME="${4}-${5}"
 
 mkdir -p /etc/shared/${1}s
-echo "$6" >/etc/shared/${1}s/${BASENAME}
+signal /etc/shared/${1}s/${BASENAME} "$6"
 
 ALGO="$2"
 PORT="$3"
@@ -91,8 +96,7 @@ if [ "$STATE" = "revoked" ]; then
 fi
 
 # Inform the sut process that we are initialized.
-echo "Signaling /etc/shared/${BASENAME}.ready."
-touch /etc/shared/${BASENAME}.ready
+signal /etc/shared/${BASENAME}.ready
 
 # Wait for the sut process to notify this client to continue.
 [ "$1"  = "client" ] && wait_file /etc/shared/${BASENAME}.continue 600
