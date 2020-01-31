@@ -22,7 +22,7 @@ services:
   vpn1:
     image: lochnerr/openvpn:latest
     privileged: true
-    command: /usr/local/bin/openvpn-test-server ec  7111 10.77.123.0 3
+    command: /usr/local/bin/openvpn-test server ec  7111 10.77.123.0 3
     restart: "no"
     hostname: vpn1.example.com
     volumes:
@@ -33,7 +33,7 @@ services:
   vpn2:
     image: lochnerr/openvpn:latest
     privileged: true
-    command: /usr/local/bin/openvpn-test-server rsa 7112 10.77.123.0 5
+    command: /usr/local/bin/openvpn-test server rsa 7112 10.77.123.0 5
     restart: "no"
     hostname: vpn2.example.com
     volumes:
@@ -44,7 +44,7 @@ services:
   client1:
     image: lochnerr/openvpn:latest
     privileged: true
-    command: /usr/local/bin/openvpn-test-client ec  7111 vpn1.example.com client1 active   10
+    command: /usr/local/bin/openvpn-test client ec  7111 vpn1.example.com client1 active   10
     restart: "no"
     hostname: client1.example.com
     volumes:
@@ -55,7 +55,7 @@ services:
   client2:
     image: lochnerr/openvpn:latest
     privileged: true
-    command: /usr/local/bin/openvpn-test-client ec  7111 vpn1.example.com client2 revoked  15
+    command: /usr/local/bin/openvpn-test client ec  7111 vpn1.example.com client2 revoked  15
     restart: "no"
     hostname: client2.example.com
     volumes:
@@ -66,7 +66,7 @@ services:
   client3:
     image: lochnerr/openvpn:latest
     privileged: true
-    command: /usr/local/bin/openvpn-test-client rsa 7112 vpn2.example.com client3 active   20
+    command: /usr/local/bin/openvpn-test client rsa 7112 vpn2.example.com client3 active   20
     restart: "no"
     hostname: client3.example.com
     volumes:
@@ -77,7 +77,7 @@ services:
   client4:
     image: lochnerr/openvpn:latest
     privileged: true
-    command: /usr/local/bin/openvpn-test-client rsa 7112 vpn2.example.com client4 revoked  25
+    command: /usr/local/bin/openvpn-test client rsa 7112 vpn2.example.com client4 revoked  25
     restart: "no"
     hostname: client4.example.com
     volumes:
@@ -88,7 +88,7 @@ services:
   sut:
     image: lochnerr/openvpn:latest
     privileged: true
-    command: /usr/local/bin/openvpn-test sut
+    command: /usr/local/bin/openvpn-test-sut
     restart: "no"
     hostname: sut.example.com
     volumes:

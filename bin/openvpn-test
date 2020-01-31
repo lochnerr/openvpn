@@ -2,86 +2,135 @@
 
 set -e
 
-# Script to test the openvpn container.
+# Run an OpenVPN test instance.
 
-# This is run as part of the automated system unit tests by
-# docker-compose.test.yml.  
-
-# The test process is:
-# 1) Create and start a server container.
-# 2) Create and start a client container.
-# 3) Verify that the client can ping the server.
-
-# Wait for a file to appear on shared volume.
 wait_file() {
-  echo "Waiting for $1."
-  for try in $(seq -s ' ' 1 ${2:-180}) ; do
-    if [ -e "$1" ]; then
+
+  # Wait for file.
+  echo "Waiting for file: ${1}."
+  for try in $(seq -s ' ' 1 ${2:-120}) ; do
+    sleep 1s
+    if [ -e $1 ]; then
       echo "File $1 is available!"
-      sleep 2
-      return 0
+      break
     fi
-    sleep 1
   done
-  echo "Error: file $1 is not available!"
-  exit 1
 }
 
-sut_test() {
+BASENAME="$(hostname -f)"
+[ "$1" = "client" ] && BASENAME="${4}-${5}"
 
-  openvpn-test-create-ca subca
-  touch /etc/shared/ca-is-ready
+mkdir -p /etc/shared/${1}s
+echo "$6" >/etc/shared/${1}s/${BASENAME}
 
-  mkdir -p /etc/shared/servers
-  mkdir -p /etc/shared/clients
+ALGO="$2"
+PORT="$3"
+if [ "$1" = "client" ]; then
+  SERVER="$4"
+  CLIENT="$5"
+  STATE="$6"
+else
+  NET="$4"
+fi
+SHORT_NAME="$(echo $SERVER | cut -d '.' -f 1)"
 
-  echo "Running sut tests"
+# Delay before starting.
+[ "$1"  = "client" ] && [ -n "$7" ] && sleep $7
+[ "$1" != "client" ] && [ -n "$5" ] && sleep $5
 
-  # Wait for all clients to become ready.
-  for file in $(ls /etc/shared/clients) ; do
-    wait_file /etc/shared/${file}.ready 60
-    rm /etc/shared/${file}.ready
-    sleep 2s
-  done
-  touch /etc/shared/clients-are-ready
-
-  echo "Clients are up!"
-
-  # Wait for all clients to connect (or not).
-  ERRS=""
-  for file in $(ls /etc/shared/clients) ; do
-    touch /etc/shared/${file}.continue
-    wait_file /etc/shared/${file}.status 180
-    EXPECTED="$(cat /etc/shared/clients/$file)"
-    if [ "$(cat /etc/shared/${file}.status)" = "$EXPECTED" ]; then
-      echo "Info: Client test passed, $file status ${EXPECTED}."
-    else
-      echo "Error: Client test failed, $file status $(cat /etc/shared/${file}.status)."
-      ERRS="true"
-    fi
-    rm /etc/shared/${file}.status
-  done
-
-  # Tell the vpn servers and certificate authorities to stop.
-  touch /etc/shared/shutdown-signal
-  scp $SSH_OPTS /etc/shared/shutdown-signal root@rootca:/etc/
-  scp $SSH_OPTS /etc/shared/shutdown-signal root@ca:/etc/
-
-  # Wait a little for the server to stop.
-  sleep 5s
-
-  if [ -z "$ERRS" ]; then
-    echo "Info: All client tests passed!"
-    exit 0
-  else
-    echo "Error: One or more client tests failed!"
-    exit 1
-  fi
-}
-
-# Start
+echo "Running Tests for ${BASENAME}."
 
 SSH_OPTS="-o IdentitiesOnly=true -o StrictHostKeyChecking=no -i /etc/testing/id_ed25519_testing"
 
-sut_test
+# Create the openvpn directory.
+[ "$1" = "client" ] && mkdir -p /home/$CLIENT/.cert
+
+# Get into the openvpn directory.
+cd /etc/openvpn
+[ "$1" = "client" ] && cd /home/$CLIENT/.cert
+
+# Create server key and certificate signing request.
+easyrsa --batch init-pki
+if [ "$ALGO" = "rsa" ]; then
+  easyrsa --batch --dn-mode=cn_only --req-cn="'${BASENAME}'" --use-algo=rsa --keysize=4096    --digest=sha256 gen-req ${BASENAME} nopass
+else
+  easyrsa --batch --dn-mode=cn_only --req-cn="'${BASENAME}'" --use-algo=ec  --curve=secp521r1 --digest=sha256 gen-req ${BASENAME} nopass
+fi 
+[ "$1"  = "client" ] && mv pki/private/*.key .
+[ "$1" != "client" ] && mv pki/private/*.key server.key
+mv pki/reqs/*.req .
+rm -rf pki
+
+# Wait for the ready signal.
+[ "$1"  = "client" ] && wait_file /etc/shared/${SERVER}.ready 600
+[ "$1" != "client" ] && wait_file /etc/shared/ca-is-ready 30
+
+# Send the signing request to the CA.
+scp $SSH_OPTS ${BASENAME}.req root@ca:.
+rm ${BASENAME}.req
+
+# Sign the request and create the package.
+CMD="openvpn-package --port ${PORT:-1194} --net ${NET:-10.8.0.0} --test ${BASENAME}"
+[ "$1"  = "client" ] && CMD="openvpn-package --port ${PORT:-1194} --nopass --address $SHORT_NAME --test $SERVER $CLIENT"
+ssh $SSH_OPTS root@ca <<-__EOD__
+	$CMD
+	__EOD__
+
+if [ "$STATE" = "revoked" ]; then
+  echo "Testing revoked certificate: ${BASENAME}."
+  # Revoke the client key.
+  ssh $SSH_OPTS root@ca <<-__EOD__
+	easyrsa --batch revoke ${BASENAME}
+	easyrsa gen-crl
+	# Build a new package for the server.
+	[ -e ${SERVER}/vars ] && echo "${SERVER}/vars:"
+	[ -e ${SERVER}/vars ] && cat ${SERVER}/vars
+	[ -e ${SERVER}/vars ] && echo "===="
+	openvpn-package --port ${PORT:-1194} --net 10.77.123.0 --test ${SERVER}
+	__EOD__
+fi
+
+# Inform the sut process that we are initialized.
+echo "Signaling /etc/shared/${BASENAME}.ready."
+touch /etc/shared/${BASENAME}.ready
+
+# Wait for the sut process to notify this client to continue.
+[ "$1"  = "client" ] && wait_file /etc/shared/${BASENAME}.continue 600
+[ "$1" != "client" ] && wait_file /etc/shared/clients-are-ready 600
+
+# Get the "package" from the ca.
+scp $SSH_OPTS root@ca:${BASENAME}.tgz .
+
+# Extract the results.
+tar -xzf $BASENAME.tgz
+
+# Remove the unneeded tar file.
+rm $BASENAME.tgz
+
+echo "Starting OpenVPN for ${BASENAME}."
+[ "$1"  = "client" ] && openvpn --config $SERVER.ovpn --daemon
+[ "$1" != "client" ] && openvpn --config openvpn.conf &
+
+# Wait for shutdown signal.
+if [ "$1" != "client" ]; then
+  wait_file /etc/shared/shutdown-signal 1200
+  exit 0
+fi
+
+# Wait to connect to the vpn server.
+TRIES="30"
+[ "$STATE" = "revoked" ] && TRIES="10"
+rm -f /etc/shared/${BASENAME}.status
+echo "Pinging server from client ${BASENAME}."
+for try in  $(seq 1 $TRIES) ; do
+  if ping -c 3 -W 1 10.77.123.1 >/dev/null 2>&1 ; then
+    echo "Info: ${BASENAME} connected!"
+    echo "active" >/etc/shared/${BASENAME}.status
+    break
+  fi
+done
+if [ ! -e /etc/shared/${BASENAME}.status ]; then
+  echo "Info: ${BASENAME} did not connect!"
+  echo "revoked" >/etc/shared/${BASENAME}.status
+fi
 
