@@ -91,7 +91,7 @@ if [ "$STATE" = "revoked" ]; then
 	[ -e ${SERVER}/vars ] && echo "${SERVER}/vars:"
 	[ -e ${SERVER}/vars ] && cat ${SERVER}/vars
 	[ -e ${SERVER}/vars ] && echo "===="
-	openvpn-package --port ${PORT:-1194} --net 10.77.123.0 --test ${SERVER}
+	openvpn-package --test ${SERVER}
 	__EOD__
 fi
 

@@ -55,70 +55,85 @@ usage() {
   exit 1
 }
 
-# Before processing the command line options, source the "server" vars, if there are any.
-[ -n "$1" ] && [ -e $1/vars ] && . $1/vars
+process_options() {
 
-# Command line options
-PARAMS=""
+  # Command line options
+  PARAMS=""
 
-while (( "$#" )); do
-  case "$1" in
-    -h|--help)
-      usage
-      ;;
-    -p|--port)
-      PORT="$2"
-      shift 2
-      ;;
-    -n|--net)
-      NETWORK="$2"
-      shift 2
-      ;;
-    -m|--mask)
-      NETMASK="$2"
-      shift 2
-      ;;
-    -r|--route)
-      ROUTE="$2"
-      shift 2
-      ;;
-    -z|--route_mask)
-      ROUTE_MASK="$2"
-      shift 2
-      ;;
-    -a|--address)
-      SERVER_ADDR="$2"
-      shift 2
-      ;;
-    --nopass)
-      OPTS="-nodes $OPTS"
-      shift
-      ;;
-    --test)
-      SIGNMODE="test"
-      shift
-      ;;
-    --) # end argument parsing
-      shift
-      break
-      ;;
-    -*|--*=) # unsupported flags
-      usage "Error: Unsupported flag $1"
-      ;;
-    *) # preserve positional arguments
-      PARAMS="$PARAMS $1"
-      shift
-      ;;
-  esac
-done
-
-# set positional arguments in their proper place
-eval set -- "$PARAMS"
+  while (( "$#" )); do
+    case "$1" in
+      -h|--help)
+        usage
+        ;;
+      -p|--port)
+        PORT="$2"
+        shift 2
+        ;;
+      -n|--net)
+        NETWORK="$2"
+        shift 2
+        ;;
+      -m|--mask)
+        NETMASK="$2"
+        shift 2
+        ;;
+      -r|--route)
+        ROUTE="$2"
+        shift 2
+        ;;
+      -z|--route_mask)
+        ROUTE_MASK="$2"
+        shift 2
+        ;;
+      -a|--address)
+        SERVER_ADDR="$2"
+        shift 2
+        ;;
+      --nopass)
+        OPTS="-nodes $OPTS"
+        shift
+        ;;
+      --test)
+        SIGNMODE="test"
+        shift
+        ;;
+      --) # end argument parsing
+        shift
+        break
+        ;;
+      -*|--*=) # unsupported flags
+        usage "Error: Unsupported flag $1"
+        ;;
+      *) # preserve positional arguments
+        PARAMS="$PARAMS $1"
+        shift
+        ;;
+    esac
+  done
+}
 
 die() {
   echo $1 >&2
   exit 1
 }
+
+# Process the options to get the package name.
+process_options $@
+[ -z "$PARAMS" ] && usage
+
+# Now source the previously saved package variables, if any.
+package="$(echo $PARAMS | cut -d ' ' -f 1)"
+if [ -e $package/vars ]; then
+  echo "Sourcing $package/vars."
+  . $package/vars
+fi
+
+# Process the options again to override any previously saved values with newer 
+# values specified on the command line.
+process_options $@
+
+# set positional arguments in their proper place
+eval set -- "$PARAMS"
 
 generate_server_config() {
 
@@ -222,8 +237,6 @@ write_value() {
 }
 
 # Start of main.
-
-[ $# -lt 1 ] && usage
 
 SERVER="$1"
 CLIENT="$2"
