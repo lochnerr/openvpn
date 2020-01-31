@@ -28,6 +28,7 @@ usage() {
 
 	  -p, --port                 Set port to use (default 1194).
 	  -h, --help                 Show this help
+	  --test                     Set test mode.
 
 	  Server Only Settings:
 
@@ -39,8 +40,6 @@ usage() {
 	  Client Only Settings:
 
 	  -a, --address              Server Address (default SERVER_NAME).
-	 --nopass                    No client key password.
-	 --test                      Set test mode.
 
 	Client Example:
 
@@ -89,10 +88,6 @@ process_options() {
         SERVER_ADDR="$2"
         shift 2
         ;;
-      --nopass)
-        OPTS="-nodes $OPTS"
-        shift
-        ;;
       --test)
         SIGNMODE="test"
         shift
@@ -117,12 +112,15 @@ die() {
   exit 1
 }
 
-# Process the options to get the package name.
+# Process the options to get the server and/or client name.
 process_options $@
 [ -z "$PARAMS" ] && usage
 
-# Now source the previously saved package variables, if any.
-package="$(echo $PARAMS | cut -d ' ' -f 1)"
+# Now source the previously saved client variables, if any.
+package="$(echo $PARAMS | cut -d ' ' -f 2)"
+# If no client specified, then it is a server so get its name.
+package="$PARAMS"
+# If a vars file exists, source it.
 if [ -e $package/vars ]; then
   echo "Sourcing $package/vars."
   . $package/vars
@@ -280,7 +278,6 @@ if [ -n "$res" ]; then
   echo "RSA Encryption ($KEYSIZE bit)."
 else
   # EC encryption so get curve.
-  echo "ASN1 OID: secp521r1"
   test="$(cat ${ABBR}-csrinfo.txt | grep 'ASN1 OID:' || :)"
   res="$(echo $test | grep 'ASN1' || :)"
   CURVE="$(echo $res | awk '{print $3}')"
@@ -300,9 +297,9 @@ echo "DIGEST is $DIGEST"
 
 rm ${ABBR}-csrinfo.txt
 
-# Update the server vars that have been set.
-mkdir -p $SERVER
-VARS="$SERVER/vars"
+# Update the vars that have been set.
+mkdir -p $ABBR
+VARS="$ABBR/vars"
 rm -f $VARS
 write_value PORT
 write_value NETWORK
@@ -345,7 +342,7 @@ copy_ca() {
   dest="$1"
   pfx="$2"
   hash="$(openssl x509 -hash -noout -in pki/${pfx}ca.crt)"
-  mkdir -p $dest/jail/ca
+  [ ! -d $dest/jail/ca ] && mkdir -p $dest/jail/ca
   cp -p pki/${pfx}ca.crt   $dest/jail/ca/${hash}.0
   cp -p pki/${pfx}crl.pem  $dest/jail/ca/${hash}.r0
 }
@@ -379,10 +376,9 @@ else
     ln -sf jail/crl.pem ${ABBR}/crl.pem
   else
     # There is a root ca.
-    mkdir -p $ABBR/jail/ca
     copy_ca ${ABBR} root-
     copy_ca ${ABBR}
-    ln -sf jail/ca   ${ABBR}/ca
+    [ ! -e ${ABBR}/ca ] && ln -sf jail/ca   ${ABBR}/ca
   fi
   # Set jail directories ownership.
   chown -R nobody:nobody         ${ABBR}/jail

@@ -76,7 +76,7 @@ rm ${BASENAME}.req
 
 # Sign the request and create the package.
 CMD="openvpn-package --port ${PORT:-1194} --net ${NET:-10.8.0.0} --test ${BASENAME}"
-[ "$1"  = "client" ] && CMD="openvpn-package --port ${PORT:-1194} --nopass --address $SHORT_NAME --test $SERVER $CLIENT"
+[ "$1"  = "client" ] && CMD="openvpn-package --port ${PORT:-1194} --address $SHORT_NAME --test $SERVER $CLIENT"
 ssh $SSH_OPTS root@ca <<-__EOD__
 	$CMD
 	__EOD__
