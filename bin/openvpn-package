@@ -135,91 +135,57 @@ eval set -- "$PARAMS"
 
 generate_server_config() {
 
-  echo "port $PORT"                                                >$CONFIG
-  echo "proto $PROTOCOL"                                          >>$CONFIG
-  echo "dev tun"                                                  >>$CONFIG
   if [ -e pki/root-ca.crt ]; then
-    echo "capath /ca"                                             >>$CONFIG
+    CA='capath /ca'
   else
-    echo "ca ca.crt"                                              >>$CONFIG
-    echo "crl-verify crl.pem"                                     >>$CONFIG
+    CA='ca ca.crt
+crl-verify crl.pem'
   fi
-  echo "cert server.crt"                                          >>$CONFIG
-  echo "key server.key"                                           >>$CONFIG
+
   if [ -n "$CURVE" ]; then
-    echo "dh none"                                                >>$CONFIG
+    DHPARM="dh none"
   else
-    echo "dh dh.pem"                                              >>$CONFIG
+    DHPARM="dh dh.pem"
     if [ ! -e pki/dh${KEYSIZE}.pem ]; then
       easyrsa --batch --keysize=$KEYSIZE gen-dh
       mv pki/dh.pem pki/dh${KEYSIZE}.pem
     else
       echo "Using existing dh${KEYSIZE}.pem."
     fi
-    cp -p pki/dh${KEYSIZE}.pem $SERVER/dh.pem
+    cp -p pki/dh${KEYSIZE}.pem $ABBR/dh.pem
   fi
-  echo "topology subnet"                                          >>$CONFIG
-  echo "server $NETWORK $NETMASK"                                 >>$CONFIG
-  echo "#push 'route $ROUTE_NET $ROUTE_MASK'"                     >>$CONFIG
-  echo "client-config-dir /ccd"                                   >>$CONFIG
-  echo "keepalive 10 120"                                         >>$CONFIG
-  echo "tls-crypt tls.key"                                        >>$CONFIG
-  echo "cipher AES-256-GCM"                                       >>$CONFIG
-  echo "compress lz4-v2"                                          >>$CONFIG
-  echo "push 'compress lz4-v2'"                                   >>$CONFIG
-  echo "max-clients 20"                                           >>$CONFIG
-  echo "user $VUSER"                                              >>$CONFIG
-  echo "group $VGROUP"                                            >>$CONFIG
-  echo "persist-key"                                              >>$CONFIG
-  echo "persist-tun"                                              >>$CONFIG
-  echo "status openvpn-status.log"                                >>$CONFIG
-  echo "verb 4"                                                   >>$CONFIG
-  echo "chroot /etc/openvpn/jail"                                 >>$CONFIG
-  echo "remote-cert-eku 'TLS Web Client Authentication'"          >>$CONFIG
-  echo "tls-version-min 1.2"                                      >>$CONFIG
-  echo "tls-cipher TLS-ECDHE-ECDSA-WITH-AES-256-GCM-SHA384"       >>$CONFIG
-  echo "tls-server"                                               >>$CONFIG
-  if [ -n "$CURVE" ]; then
-    echo "ecdh-curve secp521r1"                                   >>$CONFIG
-  fi
-  echo "ncp-ciphers AES-256-GCM"                                  >>$CONFIG
-  echo "auth $DIGEST"                                             >>$CONFIG
-  echo "##gw client-to-client"                                    >>$CONFIG
-  echo "# After ccd"                                              >>$CONFIG
-  echo "## gw route 192.168.33.0 255.255.255.0"                   >>$CONFIG
-  echo "# Then create a file ccd/vpnclone-gw with this line:"     >>$CONFIG
-  echo "#   iroute 192.168.33.0 255.255.255.0"                    >>$CONFIG
+
+  sed  \
+    -e "s:^capath .*:$CA:" \
+    -e "s:^dh .*:$DHPARM:" \
+    -e "s:\$DIGEST:$DIGEST:" \
+    -e "s:\$NETWORK:$NETWORK:" \
+    -e "s:\$NETMASK:$NETMASK:" \
+    -e "s:\$PORT:$PORT:" \
+    -e "s:\$PROTOCOL:$PROTOCOL:" \
+    -e "s:\$ROUTE_NET:$ROUTE_NET:" \
+    -e "s:\$ROUTE_MASK:$ROUTE_MASK:" \
+    -e "s:\$VUSER:$VUSER:" \
+    -e "s:\$VGROUP:$VGROUP:" \
+    /usr/local/bin/templates/server.tmpl >$CONFIG
+
+  [ -n "$CURVE" ] && sed -i -e "/auth .*/i ecdh-curve $CURVE" $CONFIG
+
+  true # Prevents a premature shell termination.
 }
 
 generate_client_config() {
 
-  echo "client"                                                    >$CONFIG
-  echo "dev tun"                                                  >>$CONFIG
-  echo "proto $PROTOCOL"                                          >>$CONFIG
-  echo "remote ${SERVER_ADDR} $PORT"                              >>$CONFIG
-  echo "float"                                                    >>$CONFIG
-  echo "resolv-retry infinite"                                    >>$CONFIG
-  echo "nobind"                                                   >>$CONFIG
-  echo "# Downgrade privileges after initialization (non-Windows only)"   >>$CONFIG
-  echo "user $VUSER"                                              >>$CONFIG
-  echo "group $VGROUP"                                            >>$CONFIG
-  echo "persist-key"                                              >>$CONFIG
-  echo "persist-tun"                                              >>$CONFIG
-  echo "ca ${SERVER}-ca.crt"                                      >>$CONFIG
-  echo "cert ${SERVER}-${CLIENT}.crt"                             >>$CONFIG
-  echo "key ${SERVER}-${CLIENT}.key"                              >>$CONFIG
-  echo "remote-cert-tls server"                                   >>$CONFIG
-  echo "tls-crypt ${SERVER}-tls.key"                              >>$CONFIG
-  echo "verify-x509-name 'CN=${SERVER}'"                          >>$CONFIG
-  echo "remote-cert-eku 'TLS Web Server Authentication'"          >>$CONFIG
-  echo "cipher AES-256-GCM"                                       >>$CONFIG
-  echo "keepalive 10 120"                                         >>$CONFIG
-  echo "verb 4"                                                   >>$CONFIG
-  echo "tls-client"                                               >>$CONFIG
-  echo "tls-version-min 1.2"                                      >>$CONFIG
-  echo "tls-cipher TLS-ECDHE-ECDSA-WITH-AES-256-GCM-SHA384"       >>$CONFIG
-  echo "auth $DIGEST"                                             >>$CONFIG
-  echo "auth-nocache"                                             >>$CONFIG
+  sed  \
+    -e "s:\$PROTOCOL:$PROTOCOL:" \
+    -e "s:\${SERVER_ADDR}:${SERVER_ADDR}:" \
+    -e "s:\$PORT:$PORT:" \
+    -e "s:\$VUSER:$VUSER:" \
+    -e "s:\$VGROUP:$VGROUP:" \
+    -e "s:\${SERVER}:${SERVER}:" \
+    -e "s:\${CLIENT}:${CLIENT}:" \
+    -e "s:\$DIGEST:$DIGEST:" \
+    /usr/local/bin/templates/client.tmpl >$CONFIG
 }
 
 write_value() {
